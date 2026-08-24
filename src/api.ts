@@ -22,25 +22,49 @@ export interface PermittedCategory {
   matched_ingredients: string[];
 }
 
-/** Weightages from KYC classification sheet */
-export const CONFIDENCE_WEIGHTS = {
-  food_name: 0.4,
-  food_description: 0.3,
-  intended_use: 0.2,
-  known_specifications: 0.1,
-} as const;
-
 export interface WeightedRecommendation {
   category_id: string;
   category_name: string;
   food_name_confidence: number;
   food_description_confidence: number;
-  intended_use_confidence: number;
-  known_specifications_confidence: number;
+  ingredient_confidence: number;
   total_confidence: number;
-  matched_ingredients: string[];
-  ingredient_match_count: number;
   is_preference: boolean;
+}
+
+export interface CategorizeSignalEvidence {
+  [key: string]: unknown;
+}
+
+export interface CategorizeSignal {
+  match_type: string | null;
+  used: boolean;
+  categories_considered: number;
+  ingredient_count?: number;
+  matched_ingredient_count?: number;
+  evidence: CategorizeSignalEvidence[];
+}
+
+export interface CategorizeResultRow {
+  category_id: string;
+  category_name: string | null;
+  score: number;
+  confidence_score: number;
+  signal_contributions: Record<string, number>;
+  signal_shares: Record<string, number>;
+}
+
+export interface CategorizeResponse {
+  query: {
+    food_name: string | null;
+    food_description: string | null;
+    ingredients: string[] | null;
+  };
+  applied_weights: Record<string, number>;
+  configured_weights: Record<string, number>;
+  signals: Record<string, CategorizeSignal>;
+  results: CategorizeResultRow[];
+  error?: string;
 }
 
 export async function listIngredients(q?: string, limit = 200) {
@@ -88,16 +112,44 @@ export async function checkPermittedIngredients(ingredient_list: IngredientItem[
   return data;
 }
 
-export function computeWeightedConfidence(parts: {
-  food_name: number;
-  food_description: number;
-  intended_use: number;
-  known_specifications: number;
-}): number {
-  return (
-    parts.food_name * CONFIDENCE_WEIGHTS.food_name +
-    parts.food_description * CONFIDENCE_WEIGHTS.food_description +
-    parts.intended_use * CONFIDENCE_WEIGHTS.intended_use +
-    parts.known_specifications * CONFIDENCE_WEIGHTS.known_specifications
-  );
+/**
+ * Single call replacing the old client-side name/description/ingredient
+ * fusion: the backend does the weighting (default name 40% / description
+ * 30% / ingredients 30%) and returns a per-category breakdown that already
+ * sums to `confidence_score`.
+ */
+export async function categorize(params: {
+  food_name?: string;
+  food_description?: string;
+  ingredients?: string[];
+  limit?: number;
+}) {
+  const { data } = await api.post<CategorizeResponse>('/kyc/categorize', params);
+  return data;
+}
+
+/**
+ * The prediction APIs return zero-padded category ids (`01.1.1.1`, and
+ * occasionally a bare number like 12.1), while the ingredient collection stores
+ * them unpadded (`1.1.1.1`). Normalise before crossing between the two.
+ */
+export function normalizeCategoryCode(code: string | number): string {
+  return String(code)
+    .split('.')
+    .map((seg) => seg.replace(/^0+(?=\d)/, ''))
+    .join('.');
+}
+
+export async function verifyIngredients(
+  ingredient_list: IngredientItem[],
+  food_category_system: string | number
+) {
+  const { data } = await api.post<{
+    food_category_system: string;
+    verified: boolean;
+  }>('/kyc/verify_ingredients', {
+    ingredient_list,
+    food_category_system: normalizeCategoryCode(food_category_system),
+  });
+  return data;
 }
