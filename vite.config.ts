@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+<<<<<<< Updated upstream
 // Point the dev proxy at a local backend with:
 //   VITE_API_TARGET=http://localhost:5000 npm run dev
 // Defaults to the deployed dev API when unset.
@@ -21,6 +22,15 @@ export default defineConfig(({ mode }) => {
         '/kyc': target,
         '/category_id': target,
       },
+=======
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  server: {
+    port: 3000,
+    proxy: {
+      '/kyc': 'http://localhost:5000/',
+      '/category_id': 'http://localhost:5000/',
+>>>>>>> Stashed changes
     },
   }
 })

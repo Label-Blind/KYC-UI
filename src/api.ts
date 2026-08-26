@@ -112,6 +112,7 @@ export async function checkPermittedIngredients(ingredient_list: IngredientItem[
   return data;
 }
 
+<<<<<<< Updated upstream
 /**
  * Single call replacing the old client-side name/description/ingredient
  * fusion: the backend does the weighting (default name 40% / description
@@ -152,4 +153,54 @@ export async function verifyIngredients(
     food_category_system: normalizeCategoryCode(food_category_system),
   });
   return data;
+=======
+export interface PredictCategoryResult {
+  category_id: string;
+  category_name: string | null;
+  name_confidence: number;
+  description_confidence: number;
+  ingredient_verified: boolean;
+  final_score: number;
+}
+
+export interface PredictCategoryResponse {
+  food_name: string;
+  food_description: string;
+  ingredient_names: string[];
+  match_source: string;
+  name_candidates: number;
+  description_candidates: number;
+  intersected_candidates: number;
+  results: PredictCategoryResult[];
+}
+
+/** Single backend call that blends food-name, food-description, and
+ * ingredient-permissibility signals into one ranked list (name 40% +
+ * description 30% + ingredient-verified 30%). */
+export async function predictCategory(
+  ingredient_list: IngredientItem[],
+  food_name: string,
+  food_description: string
+) {
+  const { data } = await api.post<PredictCategoryResponse>(
+    '/kyc/predict_category',
+    { ingredient_list },
+    { params: { food_name, food_description } }
+  );
+  return data;
+}
+
+export function computeWeightedConfidence(parts: {
+  food_name: number;
+  food_description: number;
+  intended_use: number;
+  known_specifications: number;
+}): number {
+  return (
+    parts.food_name * CONFIDENCE_WEIGHTS.food_name +
+    parts.food_description * CONFIDENCE_WEIGHTS.food_description +
+    parts.intended_use * CONFIDENCE_WEIGHTS.intended_use +
+    parts.known_specifications * CONFIDENCE_WEIGHTS.known_specifications
+  );
+>>>>>>> Stashed changes
 }

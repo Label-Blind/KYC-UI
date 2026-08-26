@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
+<<<<<<< Updated upstream
   categorize,
   listIngredients,
   type WeightedRecommendation,
+=======
+  listIngredients,
+  predictCategory,
+  type IngredientItem,
+  type PredictCategoryResult,
+>>>>>>> Stashed changes
 } from '../api';
 
 interface Props {
@@ -27,12 +34,12 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
 
   // NO flow
   const [productDescription, setProductDescription] = useState('');
-  const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
+  const [selectedIngredients, setSelectedIngredients] = useState<IngredientItem[]>([]);
   const [ingredientOptions, setIngredientOptions] = useState<string[]>([]);
   const [ingredientSearch, setIngredientSearch] = useState('');
   const [loadingIngredients, setLoadingIngredients] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [recommendations, setRecommendations] = useState<WeightedRecommendation[]>([]);
+  const [results, setResults] = useState<PredictCategoryResult[]>([]);
   const [explanation, setExplanation] = useState('');
   const [feedback, setFeedback] = useState('');
 
@@ -56,19 +63,41 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     };
   }, [ingredientSearch]);
 
+  const selectedNames = useMemo(
+    () => selectedIngredients.map((i) => i.ingredient),
+    [selectedIngredients]
+  );
+
   const filteredOptions = useMemo(
-    () => ingredientOptions.filter((i) => !selectedIngredients.includes(i)),
-    [ingredientOptions, selectedIngredients]
+    () => ingredientOptions.filter((i) => !selectedNames.includes(i)),
+    [ingredientOptions, selectedNames]
   );
 
   const addIngredient = (name: string) => {
-    if (!name || selectedIngredients.includes(name)) return;
-    setSelectedIngredients((prev) => [...prev, name]);
+    if (!name || selectedNames.includes(name)) return;
+    setSelectedIngredients((prev) => [...prev, { ingredient: name, proportion: null, unit: null }]);
     setIngredientSearch('');
   };
 
   const removeIngredient = (name: string) => {
-    setSelectedIngredients((prev) => prev.filter((i) => i !== name));
+    setSelectedIngredients((prev) => prev.filter((i) => i.ingredient !== name));
+  };
+
+  const updateIngredientComposition = (
+    name: string,
+    field: 'proportion' | 'unit',
+    value: string
+  ) => {
+    setSelectedIngredients((prev) =>
+      prev.map((i) =>
+        i.ingredient === name
+          ? {
+              ...i,
+              [field]: field === 'proportion' ? (value === '' ? null : Number(value)) : value || null,
+            }
+          : i
+      )
+    );
   };
 
   const handleSubmitAI = async () => {
@@ -95,9 +124,10 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     }
 
     setLoading(true);
-    setRecommendations([]);
+    setResults([]);
     setExplanation('');
     try {
+<<<<<<< Updated upstream
       const data = await categorize({
         food_name: rawMaterialName.trim(),
         food_description: productDescription.trim(),
@@ -138,6 +168,26 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
         );
       } else {
         setExplanation('No categories returned. Please select manually.');
+=======
+      const data = await predictCategory(
+        selectedIngredients,
+        rawMaterialName.trim(),
+        productDescription.trim()
+      );
+
+      const top = data.results.slice(0, 5);
+      setResults(top);
+
+      if (top.length > 0) {
+        const pref = top[0];
+        setExplanation(
+          `Preference: "${pref.category_name ?? pref.category_id}" (${pref.category_id}) — Final score ${pref.final_score}% = ` +
+            `Name ${pref.name_confidence}%×40% + Description ${pref.description_confidence}%×30% + ` +
+            `Ingredients ${pref.ingredient_verified ? 'verified' : 'not verified'}×30% (match source: ${data.match_source}).`
+        );
+      } else {
+        setExplanation('No categories returned from the prediction API. Please select manually.');
+>>>>>>> Stashed changes
       }
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || e?.message || 'AI classification failed');
@@ -146,8 +196,8 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     }
   };
 
-  const handleSelectCategory = (cat: WeightedRecommendation) => {
-    toast.success(`Category "${cat.category_name}" selected`);
+  const handleSelectCategory = (cat: PredictCategoryResult) => {
+    toast.success(`Category "${cat.category_name ?? cat.category_id}" selected`);
     onCategorySelected(cat.category_id);
   };
 
@@ -311,31 +361,50 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                 </ul>
               )}
               {selectedIngredients.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-1">
+                <div className="divide-y border rounded-lg bg-white mt-1">
                   {selectedIngredients.map((ing) => (
-                    <span
-                      key={ing}
-                      className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-medium px-2 py-1 rounded-full"
-                    >
-                      {ing}
+                    <div key={ing.ingredient} className="flex items-center gap-2 px-3 py-2">
+                      <span className="flex-1 text-sm font-medium text-gray-800">{ing.ingredient}</span>
+                      <input
+                        type="number"
+                        className="w-24 border rounded px-2 py-1 text-sm"
+                        value={ing.proportion ?? ''}
+                        onChange={(e) => updateIngredientComposition(ing.ingredient, 'proportion', e.target.value)}
+                        placeholder="Proportion"
+                      />
+                      <select
+                        className="border rounded px-2 py-1 text-sm"
+                        value={ing.unit ?? ''}
+                        onChange={(e) => updateIngredientComposition(ing.ingredient, 'unit', e.target.value)}
+                      >
+                        <option value="">unit</option>
+                        <option value="mg">mg</option>
+                        <option value="g">g</option>
+                        <option value="%">%</option>
+                        <option value="ml">ml</option>
+                      </select>
                       <button
                         type="button"
-                        className="text-indigo-600 hover:text-indigo-900 font-bold"
-                        onClick={() => removeIngredient(ing)}
+                        className="text-red-500 hover:text-red-700 font-bold px-1"
+                        onClick={() => removeIngredient(ing.ingredient)}
+                        title="Remove ingredient"
                       >
                         ×
                       </button>
-                    </span>
+                    </div>
                   ))}
                 </div>
               )}
             </div>
           </div>
 
+<<<<<<< Updated upstream
           <div className="bg-gray-50 border rounded-lg p-3 text-xs text-gray-600">
             <strong>Confidence weightage:</strong> Food Name 40% + Food Description 30% + Ingredients 30% = Total 100%
           </div>
 
+=======
+>>>>>>> Stashed changes
           <button
             onClick={handleSubmitAI}
             disabled={loading}
@@ -344,8 +413,34 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
             {loading ? 'Classifying...' : 'Submit for AI Classification'}
           </button>
 
-          {recommendations.length > 0 && (
+          {results.length > 0 && (
             <div className="mt-6 space-y-4">
+              <h3 className="font-semibold text-gray-800">Submitted Details</h3>
+              <div className="bg-gray-50 border rounded-lg p-3 text-sm space-y-2">
+                <div>
+                  <span className="font-medium text-gray-700">Food Name: </span>
+                  {rawMaterialName}
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Description: </span>
+                  {productDescription}
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Ingredients (composition): </span>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {selectedIngredients.map((ing) => (
+                      <span
+                        key={ing.ingredient}
+                        className="inline-flex items-center bg-indigo-100 text-indigo-800 text-xs font-medium px-2 py-1 rounded-full"
+                      >
+                        {ing.ingredient}
+                        {ing.proportion != null && ` — ${ing.proportion}${ing.unit ?? ''}`}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <h3 className="font-semibold text-gray-800">AI Category Recommendations</h3>
 
               {explanation && (
@@ -361,26 +456,43 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                       <th className="border px-2 py-2 text-left">Category</th>
                       <th className="border px-2 py-2 text-right">Name (40%)</th>
                       <th className="border px-2 py-2 text-right">Description (30%)</th>
+<<<<<<< Updated upstream
                       <th className="border px-2 py-2 text-right">Ingredient Match (30%)</th>
                       <th className="border px-2 py-2 text-right">Total</th>
+=======
+                      <th className="border px-2 py-2 text-right">Ingredients Verified (30%)</th>
+                      <th className="border px-2 py-2 text-right">Score</th>
+>>>>>>> Stashed changes
                       <th className="border px-2 py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recommendations.map((r) => (
-                      <tr key={r.category_id} className={r.is_preference ? 'bg-green-50' : ''}>
+                    {results.map((r, i) => (
+                      <tr key={r.category_id} className={i === 0 ? 'bg-green-50' : ''}>
                         <td className="border px-2 py-2">
-                          <div className="font-medium">{r.category_name}</div>
+                          <div className="font-medium">{r.category_name ?? r.category_id}</div>
                           <div className="text-xs text-gray-500">{r.category_id}</div>
-                          {r.is_preference && (
+                          {i === 0 && (
                             <span className="text-xs font-semibold text-green-700">Preference</span>
                           )}
                         </td>
+<<<<<<< Updated upstream
                         <td className="border px-2 py-2 text-right">{r.food_name_confidence.toFixed(1)}%</td>
                         <td className="border px-2 py-2 text-right">{r.food_description_confidence.toFixed(1)}%</td>
                         <td className="border px-2 py-2 text-right">{r.ingredient_confidence.toFixed(1)}%</td>
+=======
+                        <td className="border px-2 py-2 text-right">{r.name_confidence.toFixed(1)}%</td>
+                        <td className="border px-2 py-2 text-right">{r.description_confidence.toFixed(1)}%</td>
+                        <td className="border px-2 py-2 text-right">
+                          {r.ingredient_verified ? (
+                            <span className="text-green-700 font-medium">Yes</span>
+                          ) : (
+                            <span className="text-red-600 font-medium">No</span>
+                          )}
+                        </td>
+>>>>>>> Stashed changes
                         <td className="border px-2 py-2 text-right font-semibold">
-                          <ConfidenceBadge score={r.total_confidence} />
+                          <ConfidenceBadge score={r.final_score} />
                         </td>
                         <td className="border px-2 py-2 text-center">
                           <button
@@ -396,11 +508,14 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                 </table>
               </div>
 
+<<<<<<< Updated upstream
               <div className="text-xs text-gray-500">
                 Total = Name (40%) + Description (30%) + Ingredient Match (30%). Columns already show each
                 signal's contribution to Total, so they add up.
               </div>
 
+=======
+>>>>>>> Stashed changes
               <div className="border-t pt-4 space-y-3">
                 <label className="block text-sm font-medium text-gray-700">
                   Feedback <span className="text-gray-400">(optional if accepting; mandatory if rejecting)</span>
