@@ -1,16 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
-<<<<<<< Updated upstream
-  categorize,
-  listIngredients,
-  type WeightedRecommendation,
-=======
   listIngredients,
   predictCategory,
   type IngredientItem,
   type PredictCategoryResult,
->>>>>>> Stashed changes
 } from '../api';
 
 interface Props {
@@ -92,9 +86,9 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
       prev.map((i) =>
         i.ingredient === name
           ? {
-              ...i,
-              [field]: field === 'proportion' ? (value === '' ? null : Number(value)) : value || null,
-            }
+            ...i,
+            [field]: field === 'proportion' ? (value === '' ? null : Number(value)) : value || null,
+          }
           : i
       )
     );
@@ -127,48 +121,6 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     setResults([]);
     setExplanation('');
     try {
-<<<<<<< Updated upstream
-      const data = await categorize({
-        food_name: rawMaterialName.trim(),
-        food_description: productDescription.trim(),
-        ingredients: selectedIngredients,
-        limit: 5,
-      });
-
-      if (data.error) {
-        setExplanation(data.error);
-        return;
-      }
-
-      // signal_contributions are already fractions of confidence_score, so the
-      // three columns below sum exactly to Total — no separate formula to trust.
-      const weighted: WeightedRecommendation[] = data.results.map((r, i) => ({
-        category_id: r.category_id,
-        category_name: r.category_name || r.category_id,
-        food_name_confidence: Number(((r.signal_contributions.name ?? 0) * 100).toFixed(2)),
-        food_description_confidence: Number(
-          ((r.signal_contributions.description ?? 0) * 100).toFixed(2)
-        ),
-        ingredient_confidence: Number(((r.signal_contributions.ingredients ?? 0) * 100).toFixed(2)),
-        total_confidence: r.confidence_score,
-        is_preference: i === 0,
-      }));
-
-      setRecommendations(weighted);
-
-      if (weighted.length > 0) {
-        const pref = weighted[0];
-        const w = data.applied_weights;
-        const pct = (key: string) => Math.round((w[key] ?? 0) * 100);
-        setExplanation(
-          `Preference: "${pref.category_name}" (${pref.category_id}) — Total ${pref.total_confidence}% = ` +
-            `Name ${pref.food_name_confidence}% (of ${pct('name')}% weight) + ` +
-            `Description ${pref.food_description_confidence}% (of ${pct('description')}% weight) + ` +
-            `Ingredients ${pref.ingredient_confidence}% (of ${pct('ingredients')}% weight).`
-        );
-      } else {
-        setExplanation('No categories returned. Please select manually.');
-=======
       const data = await predictCategory(
         selectedIngredients,
         rawMaterialName.trim(),
@@ -182,12 +134,11 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
         const pref = top[0];
         setExplanation(
           `Preference: "${pref.category_name ?? pref.category_id}" (${pref.category_id}) — Final score ${pref.final_score}% = ` +
-            `Name ${pref.name_confidence}%×40% + Description ${pref.description_confidence}%×30% + ` +
-            `Ingredients ${pref.ingredient_verified ? 'verified' : 'not verified'}×30% (match source: ${data.match_source}).`
+          `Name ${pref.name_confidence}%×40% + Description ${pref.description_confidence}%×30% + ` +
+          `Ingredients ${pref.ingredient_verified ? 'verified' : 'not verified'}×30% (match source: ${data.match_source}).`
         );
       } else {
         setExplanation('No categories returned from the prediction API. Please select manually.');
->>>>>>> Stashed changes
       }
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || e?.message || 'AI classification failed');
@@ -398,13 +349,6 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
             </div>
           </div>
 
-<<<<<<< Updated upstream
-          <div className="bg-gray-50 border rounded-lg p-3 text-xs text-gray-600">
-            <strong>Confidence weightage:</strong> Food Name 40% + Food Description 30% + Ingredients 30% = Total 100%
-          </div>
-
-=======
->>>>>>> Stashed changes
           <button
             onClick={handleSubmitAI}
             disabled={loading}
@@ -456,13 +400,8 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                       <th className="border px-2 py-2 text-left">Category</th>
                       <th className="border px-2 py-2 text-right">Name (40%)</th>
                       <th className="border px-2 py-2 text-right">Description (30%)</th>
-<<<<<<< Updated upstream
-                      <th className="border px-2 py-2 text-right">Ingredient Match (30%)</th>
-                      <th className="border px-2 py-2 text-right">Total</th>
-=======
                       <th className="border px-2 py-2 text-right">Ingredients Verified (30%)</th>
                       <th className="border px-2 py-2 text-right">Score</th>
->>>>>>> Stashed changes
                       <th className="border px-2 py-2"></th>
                     </tr>
                   </thead>
@@ -476,11 +415,6 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                             <span className="text-xs font-semibold text-green-700">Preference</span>
                           )}
                         </td>
-<<<<<<< Updated upstream
-                        <td className="border px-2 py-2 text-right">{r.food_name_confidence.toFixed(1)}%</td>
-                        <td className="border px-2 py-2 text-right">{r.food_description_confidence.toFixed(1)}%</td>
-                        <td className="border px-2 py-2 text-right">{r.ingredient_confidence.toFixed(1)}%</td>
-=======
                         <td className="border px-2 py-2 text-right">{r.name_confidence.toFixed(1)}%</td>
                         <td className="border px-2 py-2 text-right">{r.description_confidence.toFixed(1)}%</td>
                         <td className="border px-2 py-2 text-right">
@@ -490,7 +424,6 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                             <span className="text-red-600 font-medium">No</span>
                           )}
                         </td>
->>>>>>> Stashed changes
                         <td className="border px-2 py-2 text-right font-semibold">
                           <ConfidenceBadge score={r.final_score} />
                         </td>
@@ -508,14 +441,6 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                 </table>
               </div>
 
-<<<<<<< Updated upstream
-              <div className="text-xs text-gray-500">
-                Total = Name (40%) + Description (30%) + Ingredient Match (30%). Columns already show each
-                signal's contribution to Total, so they add up.
-              </div>
-
-=======
->>>>>>> Stashed changes
               <div className="border-t pt-4 space-y-3">
                 <label className="block text-sm font-medium text-gray-700">
                   Feedback <span className="text-gray-400">(optional if accepting; mandatory if rejecting)</span>

@@ -22,16 +22,6 @@ export interface PermittedCategory {
   matched_ingredients: string[];
 }
 
-export interface WeightedRecommendation {
-  category_id: string;
-  category_name: string;
-  food_name_confidence: number;
-  food_description_confidence: number;
-  ingredient_confidence: number;
-  total_confidence: number;
-  is_preference: boolean;
-}
-
 export interface CategorizeSignalEvidence {
   [key: string]: unknown;
 }
@@ -112,48 +102,6 @@ export async function checkPermittedIngredients(ingredient_list: IngredientItem[
   return data;
 }
 
-<<<<<<< Updated upstream
-/**
- * Single call replacing the old client-side name/description/ingredient
- * fusion: the backend does the weighting (default name 40% / description
- * 30% / ingredients 30%) and returns a per-category breakdown that already
- * sums to `confidence_score`.
- */
-export async function categorize(params: {
-  food_name?: string;
-  food_description?: string;
-  ingredients?: string[];
-  limit?: number;
-}) {
-  const { data } = await api.post<CategorizeResponse>('/kyc/categorize', params);
-  return data;
-}
-
-/**
- * The prediction APIs return zero-padded category ids (`01.1.1.1`, and
- * occasionally a bare number like 12.1), while the ingredient collection stores
- * them unpadded (`1.1.1.1`). Normalise before crossing between the two.
- */
-export function normalizeCategoryCode(code: string | number): string {
-  return String(code)
-    .split('.')
-    .map((seg) => seg.replace(/^0+(?=\d)/, ''))
-    .join('.');
-}
-
-export async function verifyIngredients(
-  ingredient_list: IngredientItem[],
-  food_category_system: string | number
-) {
-  const { data } = await api.post<{
-    food_category_system: string;
-    verified: boolean;
-  }>('/kyc/verify_ingredients', {
-    ingredient_list,
-    food_category_system: normalizeCategoryCode(food_category_system),
-  });
-  return data;
-=======
 export interface PredictCategoryResult {
   category_id: string;
   category_name: string | null;
@@ -188,19 +136,4 @@ export async function predictCategory(
     { params: { food_name, food_description } }
   );
   return data;
-}
-
-export function computeWeightedConfidence(parts: {
-  food_name: number;
-  food_description: number;
-  intended_use: number;
-  known_specifications: number;
-}): number {
-  return (
-    parts.food_name * CONFIDENCE_WEIGHTS.food_name +
-    parts.food_description * CONFIDENCE_WEIGHTS.food_description +
-    parts.intended_use * CONFIDENCE_WEIGHTS.intended_use +
-    parts.known_specifications * CONFIDENCE_WEIGHTS.known_specifications
-  );
->>>>>>> Stashed changes
 }
