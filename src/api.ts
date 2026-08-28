@@ -13,13 +13,20 @@ export interface CategoryResult {
 
 export interface IngredientItem {
   ingredient: string;
-  proportion: number | null;
-  unit: string | null;
+  proportion?: number | null;
+  unit?: string | null;
+}
+
+export interface AdditiveItem {
+  additive: string;
+  proportion?: number | null;
+  unit?: string | null;
 }
 
 export interface PermittedCategory {
   food_category_system: string;
-  matched_ingredients: string[];
+  matched_ingredients?: string[];
+  matched_additives?: string[];
 }
 
 export interface CategorizeSignalEvidence {
@@ -64,6 +71,13 @@ export async function listIngredients(q?: string, limit = 200) {
   return data.ingredients;
 }
 
+export async function listAdditives(q?: string, limit = 200) {
+  const { data } = await api.get<{ additives: string[] }>('/kyc/additives', {
+    params: { q: q || undefined, limit },
+  });
+  return data.additives;
+}
+
 export async function predictByDescription(food_description: string) {
   const { data } = await api.get<{
     query: string;
@@ -102,6 +116,16 @@ export async function checkPermittedIngredients(ingredient_list: IngredientItem[
   return data;
 }
 
+export async function checkPermittedAdditives(additive_list: AdditiveItem[]) {
+  const { data } = await api.post<{
+    additive_list: AdditiveItem[];
+    additive_names: string[];
+    query_length: number;
+    categories: PermittedCategory[];
+  }>('/kyc/check_permitted_additives', { additive_list });
+  return data;
+}
+
 export interface PredictCategoryResult {
   category_id: string;
   category_name: string | null;
@@ -115,6 +139,7 @@ export interface PredictCategoryResponse {
   food_name: string;
   food_description: string;
   ingredient_names: string[];
+  additive_names?: string[];
   match_source: string;
   name_candidates: number;
   description_candidates: number;
@@ -123,16 +148,17 @@ export interface PredictCategoryResponse {
 }
 
 /** Single backend call that blends food-name, food-description, and
- * ingredient-permissibility signals into one ranked list (name 40% +
- * description 30% + ingredient-verified 30%). */
+ * ingredient/additive permissibility signals into one ranked list (name 40% +
+ * description 30% + permissibility 30%). */
 export async function predictCategory(
   ingredient_list: IngredientItem[],
   food_name: string,
-  food_description: string
+  food_description: string,
+  additive_list: AdditiveItem[] = []
 ) {
   const { data } = await api.post<PredictCategoryResponse>(
     '/kyc/predict_category',
-    { ingredient_list },
+    { ingredient_list, additive_list },
     { params: { food_name, food_description } }
   );
   return data;
