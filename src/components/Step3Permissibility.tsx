@@ -92,7 +92,7 @@ export default function Step3Permissibility({ selectedCategory, rawMaterialName 
           const matchedCat = data.categories.find(
             (c) =>
               c.food_category_system === selectedCategory &&
-              c.matched_ingredients.some((m) => m.toLowerCase() === row.name.toLowerCase())
+              c.matched_ingredients?.some((m) => m.toLowerCase() === row.name.toLowerCase())
           );
           return {
             ...row,
@@ -458,7 +458,7 @@ export default function Step3Permissibility({ selectedCategory, rawMaterialName 
                     : 'bg-white text-gray-700 border'
                 }`}
               >
-                {c.food_category_system} ({c.matched_ingredients.join(', ')})
+                {c.food_category_system} {c.matched_ingredients ? `(${c.matched_ingredients.join(', ')})` : ''}
               </span>
             ))}
           </div>
