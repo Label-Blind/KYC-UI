@@ -1,6 +1,12 @@
 import axios from 'axios';
 
+/** Vite inlines this at build time. Amplify env vars only work if this is referenced here. */
+const apiBase = (
+  import.meta.env.VITE_API_TARGET || 'https://ai.dev.foodlabelsolutions.com'
+).replace(/\/$/, '');
+
 const api = axios.create({
+  baseURL: apiBase,
   headers: { 'X-API-Key': 'supersecretapikey123' },
 });
 
