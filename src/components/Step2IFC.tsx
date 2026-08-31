@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
-  checkPermittedIngredients,
-  computeWeightedConfidence,
-  CONFIDENCE_WEIGHTS,
   listIngredients,
-  predictByDescription,
-  predictByName,
-  type CategoryResult,
-  type WeightedRecommendation,
+  listAdditives,
+  predictCategory,
+  type IngredientItem,
+  type AdditiveItem,
+  type PredictCategoryResult,
 } from '../api';
 
 interface Props {
@@ -17,17 +15,10 @@ interface Props {
   onCategorySelected: (categoryId: string) => void;
 }
 
-function scoreMap(results: CategoryResult[]) {
-  const map = new Map<string, { name: string; score: number }>();
-  for (const r of results) {
-    const id = r.category_id || r.category_name;
-    if (!id) continue;
-    const existing = map.get(id);
-    if (!existing || r.confidence_score > existing.score) {
-      map.set(id, { name: r.category_name || id, score: r.confidence_score });
-    }
-  }
-  return map;
+export interface CompositionItem {
+  name: string;
+  type: 'Ingredient' | 'Additive';
+  proportion: number | null;
 }
 
 export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onCategorySelected }: Props) {
@@ -45,17 +36,27 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
 
   // NO flow
   const [productDescription, setProductDescription] = useState('');
-  const [selectedIngredients, setSelectedIngredients] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'ingredients' | 'additives'>('ingredients');
+
+  // Single unified composition list
+  const [composition, setComposition] = useState<CompositionItem[]>([]);
+
+  // Ingredients autocomplete state
   const [ingredientOptions, setIngredientOptions] = useState<string[]>([]);
   const [ingredientSearch, setIngredientSearch] = useState('');
   const [loadingIngredients, setLoadingIngredients] = useState(false);
-  const [intendedUse, setIntendedUse] = useState('');
-  const [specifications, setSpecifications] = useState('');
+
+  // Additives autocomplete state
+  const [additiveOptions, setAdditiveOptions] = useState<string[]>([]);
+  const [additiveSearch, setAdditiveSearch] = useState('');
+  const [loadingAdditives, setLoadingAdditives] = useState(false);
+
   const [loading, setLoading] = useState(false);
-  const [recommendations, setRecommendations] = useState<WeightedRecommendation[]>([]);
+  const [results, setResults] = useState<PredictCategoryResult[]>([]);
   const [explanation, setExplanation] = useState('');
   const [feedback, setFeedback] = useState('');
 
+  // Fetch ingredients autocomplete
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -76,19 +77,69 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     };
   }, [ingredientSearch]);
 
-  const filteredOptions = useMemo(
-    () => ingredientOptions.filter((i) => !selectedIngredients.includes(i)),
-    [ingredientOptions, selectedIngredients]
+  // Fetch additives autocomplete
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setLoadingAdditives(true);
+      try {
+        const items = await listAdditives(additiveSearch || undefined, 200);
+        if (!cancelled) setAdditiveOptions(items);
+      } catch {
+        if (!cancelled) toast.error('Failed to load additives list');
+      } finally {
+        if (!cancelled) setLoadingAdditives(false);
+      }
+    };
+    const t = setTimeout(load, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [additiveSearch]);
+
+  const selectedNames = useMemo(
+    () => composition.map((i) => i.name.toLowerCase()),
+    [composition]
   );
 
-  const addIngredient = (name: string) => {
-    if (!name || selectedIngredients.includes(name)) return;
-    setSelectedIngredients((prev) => [...prev, name]);
-    setIngredientSearch('');
+  const filteredOptions = useMemo(
+    () => ingredientOptions.filter((i) => !selectedNames.includes(i.toLowerCase())),
+    [ingredientOptions, selectedNames]
+  );
+
+  const filteredAdditiveOptions = useMemo(
+    () => additiveOptions.filter((a) => !selectedNames.includes(a.toLowerCase())),
+    [additiveOptions, selectedNames]
+  );
+
+  const addItem = (name: string, type: 'Ingredient' | 'Additive') => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (selectedNames.includes(trimmed.toLowerCase())) {
+      toast.error(`"${trimmed}" is already in the list`);
+      return;
+    }
+    setComposition((prev) => [...prev, { name: trimmed, type, proportion: null }]);
+    if (type === 'Ingredient') setIngredientSearch('');
+    else setAdditiveSearch('');
   };
 
-  const removeIngredient = (name: string) => {
-    setSelectedIngredients((prev) => prev.filter((i) => i !== name));
+  const removeItem = (index: number) => {
+    setComposition((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateItemProportion = (index: number, value: string) => {
+    setComposition((prev) =>
+      prev.map((item, i) =>
+        i === index
+          ? {
+            ...item,
+            proportion: value === '' ? null : Number(value),
+          }
+          : item
+      )
+    );
   };
 
   const handleSubmitAI = async () => {
@@ -100,127 +151,88 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
       toast.error('Product Description is required');
       return;
     }
-    if (selectedIngredients.length === 0) {
-      toast.error('Select at least one ingredient');
+
+    // Auto-commit any custom text currently sitting in search inputs
+    const currentComposition = [...composition];
+    if (ingredientSearch.trim()) {
+      const customName = ingredientSearch.trim();
+      if (!currentComposition.some(c => c.name.toLowerCase() === customName.toLowerCase())) {
+        currentComposition.push({ name: customName, type: 'Ingredient', proportion: null });
+        setComposition(currentComposition);
+      }
+      setIngredientSearch('');
+    }
+
+    if (additiveSearch.trim()) {
+      const customAdd = additiveSearch.trim();
+      if (!currentComposition.some(c => c.name.toLowerCase() === customAdd.toLowerCase())) {
+        currentComposition.push({ name: customAdd, type: 'Additive', proportion: null });
+        setComposition(currentComposition);
+      }
+      setAdditiveSearch('');
+    }
+
+    if (currentComposition.length === 0) {
+      toast.error('Select or enter at least one ingredient or additive');
       return;
     }
 
+    const ingredientList: IngredientItem[] = currentComposition
+      .filter((c) => c.type === 'Ingredient')
+      .map((c) => ({ ingredient: c.name, proportion: c.proportion }));
+
+    const additiveList: AdditiveItem[] = currentComposition
+      .filter((c) => c.type === 'Additive')
+      .map((c) => ({ additive: c.name, proportion: c.proportion }));
+
     setLoading(true);
-    setRecommendations([]);
+    setResults([]);
     setExplanation('');
     try {
-      const nameText = rawMaterialName.trim();
-      const descText = productDescription.trim();
-      const useText = intendedUse.trim();
-      const specText = specifications.trim();
+      const data = await predictCategory(
+        ingredientList,
+        rawMaterialName.trim(),
+        productDescription.trim(),
+        additiveList
+      );
 
-      // Confidence APIs only with their matching input fields:
-      // - food_name endpoint  → Product Name only
-      // - food_description endpoint → Description / Intended Use / Specs
-      const [byName, byDesc, byUse, bySpec, permitted] = await Promise.all([
-        predictByName(nameText),
-        predictByDescription(descText),
-        useText
-          ? predictByDescription(useText)
-          : Promise.resolve({ results: [] as CategoryResult[] }),
-        specText
-          ? predictByDescription(specText)
-          : Promise.resolve({ results: [] as CategoryResult[] }),
-        checkPermittedIngredients(
-          selectedIngredients.map((ingredient) => ({
-            ingredient,
-            proportion: null,
-            unit: null,
-          }))
-        ),
-      ]);
+      // Prioritize Standard products (ingredient_verified === true) highest, even if score is less,
+      // followed by Proprietary products (ingredient_verified === false), both ordered by final_score descending
+      const sorted = [...(data.results || [])].sort((a, b) => {
+        if (a.ingredient_verified !== b.ingredient_verified) {
+          return a.ingredient_verified ? -1 : 1;
+        }
+        return b.final_score - a.final_score;
+      });
 
-      // confidence_score from each API response, mapped to weightage signals
-      const nameScores = scoreMap(byName.results);
-      const descScores = scoreMap(byDesc.results);
-      const useScores = scoreMap(byUse.results);
-      const specScores = scoreMap(bySpec.results);
-
-      const ingredientByCategory = new Map<string, string[]>();
-      for (const c of permitted.categories) {
-        ingredientByCategory.set(c.food_category_system, c.matched_ingredients);
-      }
-
-      // Only categories that came back with a confidence_score from the prediction APIs
-      const allIds = new Set<string>([
-        ...nameScores.keys(),
-        ...descScores.keys(),
-        ...useScores.keys(),
-        ...specScores.keys(),
-      ]);
-
-      // 3) Apply weightage: Name 40% + Description 30% + Intended Use 20% + Specs 10%
-      const weighted: WeightedRecommendation[] = [];
-      for (const id of allIds) {
-        const food_name_confidence = nameScores.get(id)?.score ?? 0;
-        const food_description_confidence = descScores.get(id)?.score ?? 0;
-        const intended_use_confidence = useScores.get(id)?.score ?? 0;
-        const known_specifications_confidence = specScores.get(id)?.score ?? 0;
-
-        const total_confidence = Number(
-          computeWeightedConfidence({
-            food_name: food_name_confidence,
-            food_description: food_description_confidence,
-            intended_use: intended_use_confidence,
-            known_specifications: known_specifications_confidence,
-          }).toFixed(2)
-        );
-
-        const matched = ingredientByCategory.get(id) ?? [];
-        const category_name =
-          nameScores.get(id)?.name ||
-          descScores.get(id)?.name ||
-          useScores.get(id)?.name ||
-          specScores.get(id)?.name ||
-          id;
-
-        weighted.push({
-          category_id: id,
-          category_name,
-          food_name_confidence,
-          food_description_confidence,
-          intended_use_confidence,
-          known_specifications_confidence,
-          total_confidence,
-          matched_ingredients: matched,
-          ingredient_match_count: matched.length,
-          is_preference: false,
-        });
-      }
-
-      // 4) Sort by weighted total → highest = Preference
-      weighted.sort((a, b) => b.total_confidence - a.total_confidence);
-      if (weighted.length > 0) {
-        weighted[0].is_preference = true;
-      }
-
-      const top = weighted.slice(0, 5);
-      setRecommendations(top);
+      const top = sorted.slice(0, 5);
+      setResults(top);
 
       if (top.length > 0) {
         const pref = top[0];
+        const tag = pref.ingredient_verified ? 'Standard' : 'Proprietary';
+        const parts: string[] = [];
+        if (ingredientList.length > 0) parts.push(`${ingredientList.length} ingredient(s)`);
+        if (additiveList.length > 0) parts.push(`${additiveList.length} additive(s)`);
+
         setExplanation(
-          `Preference: "${pref.category_name}" (${pref.category_id}) — Total ${pref.total_confidence}% = ` +
-            `Name ${pref.food_name_confidence}%×40% + Description ${pref.food_description_confidence}%×30% + ` +
-            `Intended Use ${pref.intended_use_confidence}%×20% + Specs ${pref.known_specifications_confidence}%×10%.`
+          `Preference: "${pref.category_name ?? pref.category_id}" (${pref.category_id}) [Permissibility: ${tag}] — Final score ${pref.final_score.toFixed(1)}% = ` +
+          `Name ${pref.name_confidence.toFixed(1)}%×40% + Description ${pref.description_confidence.toFixed(1)}%×30% + ` +
+          `Permissibility (${parts.join(', ')}) ${pref.ingredient_verified ? 'verified (Standard)' : 'not verified (Proprietary)'}×30% (match source: ${data.match_source}).`
         );
       } else {
-        setExplanation('No categories with confidence_score returned from APIs. Please select manually.');
+        setExplanation('No categories returned from the prediction API. Please select manually.');
       }
     } catch (e: any) {
-      toast.error(e?.message || 'AI classification failed');
+      toast.error(e?.response?.data?.detail || e?.message || 'AI classification failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSelectCategory = (cat: WeightedRecommendation) => {
-    toast.success(`Category "${cat.category_name}" selected`);
+  const handleSelectCategory = (cat: PredictCategoryResult) => {
+    const tag = cat.ingredient_verified ? 'Standard' : 'Proprietary';
+    toast.success(`Category "${cat.category_name ?? cat.category_id}" (${tag}) selected`);
     onCategorySelected(cat.category_id);
   };
 
@@ -346,7 +358,7 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Product Description / Product Function *
+              Product Description *
             </label>
             <textarea
               className="w-full border rounded-lg px-3 py-2 h-24"
@@ -357,82 +369,253 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Ingredient List *
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Composition (Ingredients & Food Additives) *
             </label>
-            <div className="border rounded-lg p-3 space-y-2">
-              <input
-                type="text"
-                className="w-full border rounded-lg px-3 py-2"
-                value={ingredientSearch}
-                onChange={(e) => setIngredientSearch(e.target.value)}
-                placeholder={loadingIngredients ? 'Loading ingredients...' : 'Search and select ingredients from database'}
-              />
-              {filteredOptions.length > 0 && ingredientSearch.trim() && (
-                <ul className="max-h-40 overflow-y-auto border rounded-lg divide-y bg-white">
-                  {filteredOptions.slice(0, 50).map((ing) => (
-                    <li key={ing}>
-                      <button
-                        type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm"
-                        onClick={() => addIngredient(ing)}
-                      >
-                        {ing}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {selectedIngredients.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {selectedIngredients.map((ing) => (
-                    <span
-                      key={ing}
-                      className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-medium px-2 py-1 rounded-full"
-                    >
-                      {ing}
-                      <button
-                        type="button"
-                        className="text-indigo-600 hover:text-indigo-900 font-bold"
-                        onClick={() => removeIngredient(ing)}
-                      >
-                        ×
-                      </button>
+
+            {/* Tabs for Add Ingredients / Add Additives */}
+            <div className="border rounded-xl p-4 bg-white shadow-sm space-y-4">
+              <div className="flex border-b border-gray-200 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('ingredients')}
+                  className={`pb-2.5 px-4 text-sm font-semibold border-b-2 transition flex items-center gap-2 ${activeTab === 'ingredients'
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                >
+                  <span>Add Ingredients</span>
+                  {composition.filter(c => c.type === 'Ingredient').length > 0 && (
+                    <span className="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded-full font-bold">
+                      {composition.filter(c => c.type === 'Ingredient').length}
                     </span>
-                  ))}
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('additives')}
+                  className={`pb-2.5 px-4 text-sm font-semibold border-b-2 transition flex items-center gap-2 ${activeTab === 'additives'
+                    ? 'border-indigo-600 text-indigo-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                >
+                  <span>Add Food Additives</span>
+                  {composition.filter(c => c.type === 'Additive').length > 0 && (
+                    <span className="bg-amber-100 text-amber-800 text-xs px-2 py-0.5 rounded-full font-bold">
+                      {composition.filter(c => c.type === 'Additive').length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Tab Panel: Ingredients Search */}
+              {activeTab === 'ingredients' && (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        className="flex-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        value={ingredientSearch}
+                        onChange={(e) => setIngredientSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (ingredientSearch.trim()) {
+                              addItem(ingredientSearch.trim(), 'Ingredient');
+                            }
+                          }
+                        }}
+                        placeholder={loadingIngredients ? 'Loading ingredients...' : 'Type or search ingredient (e.g. Cow Milk, Custom item) & press Enter'}
+                      />
+                      <button
+                        type="button"
+                        disabled={!ingredientSearch.trim()}
+                        onClick={() => {
+                          if (ingredientSearch.trim()) {
+                            addItem(ingredientSearch.trim(), 'Ingredient');
+                          }
+                        }}
+                        className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap shadow-sm"
+                      >
+                        + Add Ingredient
+                      </button>
+                    </div>
+
+                    {ingredientSearch.trim() && (
+                      <ul className="absolute z-20 left-0 right-0 max-h-52 overflow-y-auto border rounded-lg divide-y bg-white shadow-xl mt-1">
+                        {/* Custom option prompt */}
+                        {!filteredOptions.some(o => o.toLowerCase() === ingredientSearch.trim().toLowerCase()) && (
+                          <li className="bg-indigo-50/70 border-b">
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 hover:bg-indigo-100 text-sm font-semibold text-indigo-700 flex items-center justify-between"
+                              onClick={() => addItem(ingredientSearch.trim(), 'Ingredient')}
+                            >
+                              <span>+ Add &ldquo;{ingredientSearch.trim()}&rdquo; (Custom Ingredient)</span>
+                              <span className="text-xs text-indigo-500 font-normal">Press Enter</span>
+                            </button>
+                          </li>
+                        )}
+                        {/* Matching options from database */}
+                        {filteredOptions.slice(0, 50).map((ing) => (
+                          <li key={ing}>
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 hover:bg-indigo-50 text-sm font-medium text-gray-800"
+                              onClick={() => addItem(ing, 'Ingredient')}
+                            >
+                              + {ing}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </div>
               )}
+
+              {/* Tab Panel: Additives Search */}
+              {activeTab === 'additives' && (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        className="flex-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        value={additiveSearch}
+                        onChange={(e) => setAdditiveSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (additiveSearch.trim()) {
+                              addItem(additiveSearch.trim(), 'Additive');
+                            }
+                          }
+                        }}
+                        placeholder={loadingAdditives ? 'Loading additives...' : 'Type or search additive (e.g. Curcumins, INS 100, Custom Item) & press Enter'}
+                      />
+                      <button
+                        type="button"
+                        disabled={!additiveSearch.trim()}
+                        onClick={() => {
+                          if (additiveSearch.trim()) {
+                            addItem(additiveSearch.trim(), 'Additive');
+                          }
+                        }}
+                        className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 transition disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap shadow-sm"
+                      >
+                        + Add Additive
+                      </button>
+                    </div>
+
+                    {additiveSearch.trim() && (
+                      <ul className="absolute z-20 left-0 right-0 max-h-52 overflow-y-auto border rounded-lg divide-y bg-white shadow-xl mt-1">
+                        {/* Custom option prompt */}
+                        {!filteredAdditiveOptions.some(o => o.toLowerCase() === additiveSearch.trim().toLowerCase()) && (
+                          <li className="bg-amber-50/70 border-b">
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 hover:bg-amber-100 text-sm font-semibold text-amber-800 flex items-center justify-between"
+                              onClick={() => addItem(additiveSearch.trim(), 'Additive')}
+                            >
+                              <span>+ Add &ldquo;{additiveSearch.trim()}&rdquo; (Custom Additive)</span>
+                              <span className="text-xs text-amber-600 font-normal">Press Enter</span>
+                            </button>
+                          </li>
+                        )}
+                        {/* Matching options from database */}
+                        {filteredAdditiveOptions.slice(0, 50).map((add) => (
+                          <li key={add}>
+                            <button
+                              type="button"
+                              className="w-full text-left px-3 py-2 hover:bg-amber-50 text-sm font-medium text-gray-800"
+                              onClick={() => addItem(add, 'Additive')}
+                            >
+                              + {add}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Single Unified Composition Table with Type Column */}
+              <div className="pt-2 border-t space-y-2">
+                <div className="flex justify-between items-center text-xs font-semibold text-gray-700">
+                  <span>Composition List ({composition.length})</span>
+                  {composition.length > 0 && (
+                    <span className="text-gray-500 font-normal">
+                      {composition.filter(c => c.type === 'Ingredient').length} Ingredient(s), {composition.filter(c => c.type === 'Additive').length} Additive(s)
+                    </span>
+                  )}
+                </div>
+
+                {composition.length > 0 ? (
+                  <div className="border rounded-lg overflow-hidden bg-white shadow-sm">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b text-xs font-semibold text-gray-600">
+                        <tr>
+                          <th className="px-3 py-2 text-left">Item Name</th>
+                          <th className="px-3 py-2 text-center w-36">Type</th>
+                          <th className="px-3 py-2 text-right w-44">Proportion</th>
+                          <th className="px-3 py-2 text-center w-12"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {composition.map((item, idx) => (
+                          <tr key={`${item.name}-${idx}`} className="hover:bg-gray-50/70 transition">
+                            <td className="px-3 py-2.5 font-medium text-gray-800">
+                              {item.name}
+                            </td>
+                            <td className="px-3 py-2.5 text-center">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-semibold border ${item.type === 'Ingredient'
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                                  }`}
+                              >
+                                {item.type}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <div className="inline-flex items-center justify-end">
+                                <input
+                                  type="number"
+                                  className="w-24 border rounded-l px-2 py-1 text-sm text-right focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 border-r-0"
+                                  value={item.proportion ?? ''}
+                                  onChange={(e) => updateItemProportion(idx, e.target.value)}
+                                  placeholder="Value"
+                                />
+                                <span className="bg-gray-100 border border-gray-300 text-gray-600 text-xs px-2 py-1 rounded-r font-medium select-none min-w-[42px] text-center">
+                                  {item.type === 'Ingredient' ? 'g' : 'mg/kg'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2.5 text-center">
+                              <button
+                                type="button"
+                                className="text-red-500 hover:text-red-700 font-bold px-2 py-1 text-base hover:bg-red-50 rounded transition"
+                                onClick={() => removeItem(idx)}
+                                title="Remove item"
+                              >
+                                ×
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400 italic py-3 text-center border border-dashed rounded-lg bg-gray-50/50">
+                    No ingredients or additives added yet. Type or search above to add.
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Intended Use <span className="text-gray-400">(Optional — 20% weight)</span>
-            </label>
-            <textarea
-              className="w-full border rounded-lg px-3 py-2 h-16"
-              value={intendedUse}
-              onChange={(e) => setIntendedUse(e.target.value)}
-              maxLength={5000}
-              placeholder="e.g. Beverage for direct consumption"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Known Product Specifications <span className="text-gray-400">(Optional — 10% weight)</span>
-            </label>
-            <textarea
-              className="w-full border rounded-lg px-3 py-2 h-16"
-              value={specifications}
-              onChange={(e) => setSpecifications(e.target.value)}
-              maxLength={5000}
-              placeholder="e.g. Fat 3.5%, Protein 3.2%, pH 6.5"
-            />
-          </div>
-
-          <div className="bg-gray-50 border rounded-lg p-3 text-xs text-gray-600">
-            <strong>Confidence weightage:</strong> Food Name 40% + Food Description 30% + Intended Use 20% + Known Specs 10% = Total 100%
           </div>
 
           <button
@@ -443,8 +626,40 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
             {loading ? 'Classifying...' : 'Submit for AI Classification'}
           </button>
 
-          {recommendations.length > 0 && (
+          {results.length > 0 && (
             <div className="mt-6 space-y-4">
+              <h3 className="font-semibold text-gray-800">Submitted Details</h3>
+              <div className="bg-gray-50 border rounded-lg p-3 text-sm space-y-2">
+                <div>
+                  <span className="font-medium text-gray-700">Food Name: </span>
+                  {rawMaterialName}
+                </div>
+                <div>
+                  <span className="font-medium text-gray-700">Description: </span>
+                  {productDescription}
+                </div>
+                {composition.length > 0 && (
+                  <div>
+                    <span className="font-medium text-gray-700">Composition ({composition.length}): </span>
+                    <div className="flex flex-wrap gap-2 mt-1">
+                      {composition.map((item, idx) => (
+                        <span
+                          key={`${item.name}-${idx}`}
+                          className={`inline-flex items-center text-xs font-medium px-2 py-1 rounded-full border ${item.type === 'Ingredient'
+                            ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                            : 'bg-amber-100 text-amber-800 border-amber-200'
+                            }`}
+                        >
+                          <span className="font-bold mr-1">[{item.type}]</span>
+                          {item.name}
+                          {item.proportion != null && ` — ${item.proportion} ${item.type === 'Ingredient' ? 'g' : 'mg/kg'}`}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <h3 className="font-semibold text-gray-800">AI Category Recommendations</h3>
 
               {explanation && (
@@ -458,39 +673,51 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                   <thead className="bg-gray-100">
                     <tr>
                       <th className="border px-2 py-2 text-left">Category</th>
+                      <th className="border px-2 py-2 text-center">Permissibility</th>
                       <th className="border px-2 py-2 text-right">Name (40%)</th>
                       <th className="border px-2 py-2 text-right">Description (30%)</th>
-                      <th className="border px-2 py-2 text-right">Intended Use (20%)</th>
-                      <th className="border px-2 py-2 text-right">Specs (10%)</th>
-                      <th className="border px-2 py-2 text-right">Ingredients</th>
-                      <th className="border px-2 py-2 text-right">Total</th>
+                      <th className="border px-2 py-2 text-center">Ingredient (30%)</th>
+                      <th className="border px-2 py-2 text-right">Score</th>
                       <th className="border px-2 py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recommendations.map((r) => (
-                      <tr key={r.category_id} className={r.is_preference ? 'bg-green-50' : ''}>
+                    {results.map((r, i) => (
+                      <tr key={r.category_id} className={i === 0 ? 'bg-green-50' : ''}>
                         <td className="border px-2 py-2">
-                          <div className="font-medium">{r.category_name}</div>
+                          <div className="font-medium">{r.category_name ?? r.category_id}</div>
                           <div className="text-xs text-gray-500">{r.category_id}</div>
-                          {r.is_preference && (
+                          {i === 0 && (
                             <span className="text-xs font-semibold text-green-700">Preference</span>
                           )}
                         </td>
-                        <td className="border px-2 py-2 text-right">{r.food_name_confidence.toFixed(1)}%</td>
-                        <td className="border px-2 py-2 text-right">{r.food_description_confidence.toFixed(1)}%</td>
-                        <td className="border px-2 py-2 text-right">{r.intended_use_confidence.toFixed(1)}%</td>
-                        <td className="border px-2 py-2 text-right">{r.known_specifications_confidence.toFixed(1)}%</td>
-                        <td className="border px-2 py-2 text-right" title={r.matched_ingredients.join(', ')}>
-                          {r.ingredient_match_count}
+                        <td className="border px-2 py-2 text-center">
+                          {r.ingredient_verified ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                              Standard
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-300">
+                              Proprietary
+                            </span>
+                          )}
                         </td>
-                        <td className="border px-2 py-2 text-right font-semibold">
-                          <ConfidenceBadge score={r.total_confidence} />
+                        <td className="border px-2 py-2 text-right">{r.name_confidence.toFixed(1)}%</td>
+                        <td className="border px-2 py-2 text-right">{r.description_confidence.toFixed(1)}%</td>
+                        <td className="border px-2 py-2 text-center">
+                          {r.ingredient_verified ? (
+                            <span className="text-green-700 font-medium">Yes</span>
+                          ) : (
+                            <span className="text-red-600 font-medium">No</span>
+                          )}
+                        </td>
+                        <td className="border px-2 py-2 text-right font-semibold text-gray-800">
+                          {r.final_score.toFixed(1)}%
                         </td>
                         <td className="border px-2 py-2 text-center">
                           <button
                             onClick={() => handleSelectCategory(r)}
-                            className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700"
+                            className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 font-medium transition"
                           >
                             Select
                           </button>
@@ -499,10 +726,6 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                     ))}
                   </tbody>
                 </table>
-              </div>
-
-              <div className="text-xs text-gray-500">
-                Weighted total = Name×{CONFIDENCE_WEIGHTS.food_name * 100}% + Description×{CONFIDENCE_WEIGHTS.food_description * 100}% + Intended Use×{CONFIDENCE_WEIGHTS.intended_use * 100}% + Specs×{CONFIDENCE_WEIGHTS.known_specifications * 100}%
               </div>
 
               <div className="border-t pt-4 space-y-3">
@@ -558,22 +781,5 @@ function DropdownField({
         placeholder={placeholder}
       />
     </div>
-  );
-}
-
-function ConfidenceBadge({ score }: { score: number }) {
-  let color = 'bg-red-100 text-red-800';
-  let label = 'Low';
-  if (score >= 90) {
-    color = 'bg-green-100 text-green-800';
-    label = 'High';
-  } else if (score >= 75) {
-    color = 'bg-yellow-100 text-yellow-800';
-    label = 'Medium';
-  }
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${color}`}>
-      {score.toFixed(1)}% - {label}
-    </span>
   );
 }

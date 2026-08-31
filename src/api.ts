@@ -13,34 +13,55 @@ export interface CategoryResult {
 
 export interface IngredientItem {
   ingredient: string;
-  proportion: number | null;
-  unit: string | null;
+  proportion?: number | null;
+  unit?: string | null;
+}
+
+export interface AdditiveItem {
+  additive: string;
+  proportion?: number | null;
+  unit?: string | null;
 }
 
 export interface PermittedCategory {
   food_category_system: string;
-  matched_ingredients: string[];
+  matched_ingredients?: string[];
+  matched_additives?: string[];
 }
 
-/** Weightages from KYC classification sheet */
-export const CONFIDENCE_WEIGHTS = {
-  food_name: 0.4,
-  food_description: 0.3,
-  intended_use: 0.2,
-  known_specifications: 0.1,
-} as const;
+export interface CategorizeSignalEvidence {
+  [key: string]: unknown;
+}
 
-export interface WeightedRecommendation {
+export interface CategorizeSignal {
+  match_type: string | null;
+  used: boolean;
+  categories_considered: number;
+  ingredient_count?: number;
+  matched_ingredient_count?: number;
+  evidence: CategorizeSignalEvidence[];
+}
+
+export interface CategorizeResultRow {
   category_id: string;
-  category_name: string;
-  food_name_confidence: number;
-  food_description_confidence: number;
-  intended_use_confidence: number;
-  known_specifications_confidence: number;
-  total_confidence: number;
-  matched_ingredients: string[];
-  ingredient_match_count: number;
-  is_preference: boolean;
+  category_name: string | null;
+  score: number;
+  confidence_score: number;
+  signal_contributions: Record<string, number>;
+  signal_shares: Record<string, number>;
+}
+
+export interface CategorizeResponse {
+  query: {
+    food_name: string | null;
+    food_description: string | null;
+    ingredients: string[] | null;
+  };
+  applied_weights: Record<string, number>;
+  configured_weights: Record<string, number>;
+  signals: Record<string, CategorizeSignal>;
+  results: CategorizeResultRow[];
+  error?: string;
 }
 
 export async function listIngredients(q?: string, limit = 200) {
@@ -48,6 +69,13 @@ export async function listIngredients(q?: string, limit = 200) {
     params: { q: q || undefined, limit },
   });
   return data.ingredients;
+}
+
+export async function listAdditives(q?: string, limit = 200) {
+  const { data } = await api.get<{ additives: string[] }>('/kyc/additives', {
+    params: { q: q || undefined, limit },
+  });
+  return data.additives;
 }
 
 export async function predictByDescription(food_description: string) {
@@ -88,16 +116,50 @@ export async function checkPermittedIngredients(ingredient_list: IngredientItem[
   return data;
 }
 
-export function computeWeightedConfidence(parts: {
-  food_name: number;
-  food_description: number;
-  intended_use: number;
-  known_specifications: number;
-}): number {
-  return (
-    parts.food_name * CONFIDENCE_WEIGHTS.food_name +
-    parts.food_description * CONFIDENCE_WEIGHTS.food_description +
-    parts.intended_use * CONFIDENCE_WEIGHTS.intended_use +
-    parts.known_specifications * CONFIDENCE_WEIGHTS.known_specifications
+export async function checkPermittedAdditives(additive_list: AdditiveItem[]) {
+  const { data } = await api.post<{
+    additive_list: AdditiveItem[];
+    additive_names: string[];
+    query_length: number;
+    categories: PermittedCategory[];
+  }>('/kyc/check_permitted_additives', { additive_list });
+  return data;
+}
+
+export interface PredictCategoryResult {
+  category_id: string;
+  category_name: string | null;
+  name_confidence: number;
+  description_confidence: number;
+  ingredient_verified: boolean;
+  final_score: number;
+}
+
+export interface PredictCategoryResponse {
+  food_name: string;
+  food_description: string;
+  ingredient_names: string[];
+  additive_names?: string[];
+  match_source: string;
+  name_candidates: number;
+  description_candidates: number;
+  intersected_candidates: number;
+  results: PredictCategoryResult[];
+}
+
+/** Single backend call that blends food-name, food-description, and
+ * ingredient/additive permissibility signals into one ranked list (name 40% +
+ * description 30% + permissibility 30%). */
+export async function predictCategory(
+  ingredient_list: IngredientItem[],
+  food_name: string,
+  food_description: string,
+  additive_list: AdditiveItem[] = []
+) {
+  const { data } = await api.post<PredictCategoryResponse>(
+    '/kyc/predict_category',
+    { ingredient_list, additive_list },
+    { params: { food_name, food_description } }
   );
+  return data;
 }
