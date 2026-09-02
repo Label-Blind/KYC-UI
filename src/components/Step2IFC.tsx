@@ -4,10 +4,64 @@ import {
   listIngredients,
   listAdditives,
   predictCategory,
+  verifyIngredientsWithDescription,
   type IngredientItem,
   type AdditiveItem,
   type PredictCategoryResult,
+  type IngredientMatchStatus,
+  type VerifyIngredientsResponse,
 } from '../api';
+
+const MATCH_STATUS_STYLES: Record<IngredientMatchStatus, { label: string; className: string }> = {
+  matched: {
+    label: 'In description',
+    className: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+  },
+  proportion_mismatch: {
+    label: 'Proportion differs',
+    className: 'bg-amber-100 text-amber-800 border-amber-300',
+  },
+  not_in_description: {
+    label: 'Not in description',
+    className: 'bg-red-100 text-red-800 border-red-300',
+  },
+};
+
+const UNKNOWN_MATCH_STYLE = {
+  label: 'Unchecked',
+  className: 'bg-gray-100 text-gray-700 border-gray-300',
+};
+
+const matchStatusStyle = (status: IngredientMatchStatus) =>
+  MATCH_STATUS_STYLES[status] ?? UNKNOWN_MATCH_STYLE;
+
+const VERDICT_STYLES: Record<
+  VerifyIngredientsResponse['verdict'],
+  { label: string; banner: string; badge: string }
+> = {
+  match: {
+    label: 'Matches description',
+    banner: 'bg-emerald-50 border-emerald-200 text-emerald-900',
+    badge: 'bg-emerald-600 text-white',
+  },
+  partial_match: {
+    label: 'Partly matches',
+    banner: 'bg-amber-50 border-amber-200 text-amber-900',
+    badge: 'bg-amber-500 text-white',
+  },
+  mismatch: {
+    label: 'Does not match',
+    banner: 'bg-red-50 border-red-200 text-red-900',
+    badge: 'bg-red-600 text-white',
+  },
+};
+
+const formatQuantity = (value?: number, unit?: string) => {
+  if (value == null) return null;
+  const trimmed = (unit || '').trim();
+  if (!trimmed) return `${value}`;
+  return trimmed === '%' ? `${value}%` : `${value} ${trimmed}`;
+};
 
 interface Props {
   rawMaterialName: string;
@@ -53,6 +107,7 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
 
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<PredictCategoryResult[]>([]);
+  const [match, setMatch] = useState<VerifyIngredientsResponse | null>(null);
   const [explanation, setExplanation] = useState('');
   const [feedback, setFeedback] = useState('');
 
@@ -102,6 +157,15 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     () => composition.map((i) => i.name.toLowerCase()),
     [composition]
   );
+
+  // Composition rows are keyed by name, which is what the backend echoes back.
+  const matchByName = useMemo(() => {
+    const byName = new Map<string, VerifyIngredientsResponse['submitted'][number]>();
+    for (const row of match?.submitted ?? []) {
+      byName.set(row.submitted_ingredient.trim().toLowerCase(), row);
+    }
+    return byName;
+  }, [match]);
 
   const filteredOptions = useMemo(
     () => ingredientOptions.filter((i) => !selectedNames.includes(i.toLowerCase())),
@@ -188,13 +252,32 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
     setLoading(true);
     setResults([]);
     setExplanation('');
+    setMatch(null);
     try {
-      const data = await predictCategory(
-        ingredientList,
-        rawMaterialName.trim(),
-        productDescription.trim(),
-        additiveList
-      );
+      // Both run together: the ingredient/description check is advisory, so a
+      // failure there must not cost the user their category recommendations.
+      // Additives are out of scope for the check, and it needs at least one
+      // ingredient, so it is skipped for an additive-only composition.
+      const [prediction, verification] = await Promise.allSettled([
+        predictCategory(
+          ingredientList,
+          rawMaterialName.trim(),
+          productDescription.trim(),
+          additiveList
+        ),
+        ingredientList.length > 0
+          ? verifyIngredientsWithDescription(productDescription.trim(), ingredientList)
+          : Promise.resolve(null),
+      ]);
+
+      if (verification.status === 'fulfilled') {
+        setMatch(verification.value);
+      } else {
+        toast.error('Could not check ingredients against the description');
+      }
+
+      if (prediction.status === 'rejected') throw prediction.reason;
+      const data = prediction.value;
 
       // Prioritize Standard products (ingredient_verified === true) highest, even if score is less,
       // followed by Proprietary products (ingredient_verified === false), both ordered by final_score descending
@@ -569,6 +652,20 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                           <tr key={`${item.name}-${idx}`} className="hover:bg-gray-50/70 transition">
                             <td className="px-3 py-2.5 font-medium text-gray-800">
                               {item.name}
+                              {item.type === 'Ingredient' &&
+                                (() => {
+                                  const row = matchByName.get(item.name.trim().toLowerCase());
+                                  if (!row) return null;
+                                  const style = matchStatusStyle(row.status);
+                                  return (
+                                    <span
+                                      className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${style.className}`}
+                                      title={row.note || undefined}
+                                    >
+                                      {style.label}
+                                    </span>
+                                  );
+                                })()}
                             </td>
                             <td className="px-3 py-2.5 text-center">
                               <span
@@ -625,6 +722,130 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
           >
             {loading ? 'Classifying...' : 'Submit for AI Classification'}
           </button>
+
+          {match && (
+            <div className="mt-6 space-y-3">
+              <h3 className="font-semibold text-gray-800">Ingredients vs Description</h3>
+
+              <div className={`border rounded-lg p-3 text-sm ${VERDICT_STYLES[match.verdict].banner}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex items-center px-2.5 py-1 rounded text-xs font-bold ${VERDICT_STYLES[match.verdict].badge}`}
+                  >
+                    {VERDICT_STYLES[match.verdict].label}
+                  </span>
+                  <span className="font-semibold">
+                    {match.counts.matched} of {match.submitted_count} ingredients found in the
+                    description ({match.match_score.toFixed(0)}%)
+                  </span>
+                </div>
+                <p className="mt-1.5">{match.summary}</p>
+              </div>
+
+              <div className="overflow-x-auto border rounded-lg bg-white">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b text-xs font-semibold text-gray-600">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Your Ingredient</th>
+                      <th className="px-3 py-2 text-center w-44">Status</th>
+                      <th className="px-3 py-2 text-left">Stated in Description</th>
+                      <th className="px-3 py-2 text-left">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {match.submitted.map((row, idx) => {
+                      const style = matchStatusStyle(row.status);
+                      const submittedQty = formatQuantity(
+                        row.submitted_proportion,
+                        row.submitted_unit
+                      );
+                      const statedQty = formatQuantity(
+                        row.description_proportion,
+                        row.description_unit
+                      );
+                      return (
+                        <tr key={`${row.submitted_ingredient}-${idx}`} className="align-top">
+                          <td className="px-3 py-2.5 font-medium text-gray-800">
+                            {row.submitted_ingredient}
+                            {submittedQty && (
+                              <span className="text-xs text-gray-500 font-normal"> — {submittedQty}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-center">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold border ${style.className}`}
+                            >
+                              {style.label}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-gray-700">
+                            {row.description_ingredient ? (
+                              <>
+                                {row.description_ingredient}
+                                {statedQty && (
+                                  <span className="text-xs text-gray-500"> — {statedQty}</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-gray-400 italic">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-gray-600">{row.note || ''}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {match.missing_in_submission.length > 0 && (
+                <div className="text-sm">
+                  <span className="font-medium text-gray-700">
+                    Stated in the description but not in your list:
+                  </span>
+                  <div className="flex flex-wrap gap-2 mt-1">
+                    {match.missing_in_submission.map((row, idx) => {
+                      const qty = formatQuantity(row.description_proportion, row.description_unit);
+                      return (
+                        <span
+                          key={`${row.description_ingredient}-${idx}`}
+                          className="inline-flex items-center text-xs font-medium px-2 py-1 rounded-full border bg-orange-50 text-orange-800 border-orange-200"
+                        >
+                          {row.description_ingredient}
+                          {qty && ` — ${qty}`}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {match.extracted_ingredients.length > 0 && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-gray-600 hover:text-gray-800">
+                    Ingredients read from the description ({match.extracted_count})
+                  </summary>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {match.extracted_ingredients.map((row, idx) => {
+                      const qty = formatQuantity(row.proportion, row.unit);
+                      return (
+                        <span
+                          key={`${row.ingredient}-${idx}`}
+                          className="inline-flex items-center text-xs px-2 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200"
+                        >
+                          {row.ingredient}
+                          {qty && ` — ${qty}`}
+                          {row.parent && (
+                            <span className="text-gray-400 ml-1">(in {row.parent})</span>
+                          )}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
 
           {results.length > 0 && (
             <div className="mt-6 space-y-4">
