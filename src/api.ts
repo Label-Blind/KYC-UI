@@ -169,3 +169,67 @@ export async function predictCategory(
   );
   return data;
 }
+
+export type IngredientMatchStatus =
+  | 'matched'
+  | 'proportion_mismatch'
+  | 'not_in_description';
+
+export interface ExtractedIngredient {
+  ingredient: string;
+  proportion?: number;
+  unit?: string;
+  parent?: string;
+  source_text?: string;
+}
+
+export interface IngredientMatchRow {
+  submitted_ingredient: string;
+  status: IngredientMatchStatus;
+  /** How the pairing was decided: by the model, or by exact/normalised name. */
+  match_type?: 'llm' | 'exact' | 'normalised' | 'partial_name';
+  description_ingredient?: string;
+  submitted_proportion?: number;
+  submitted_unit?: string;
+  description_proportion?: number;
+  description_unit?: string;
+  description_parent?: string;
+  note?: string;
+}
+
+export interface MissingIngredient {
+  description_ingredient: string;
+  description_proportion?: number;
+  description_unit?: string;
+  parent?: string;
+}
+
+export interface VerifyIngredientsResponse {
+  food_description: string;
+  ingredient_statement_found: boolean;
+  extracted_ingredients: (ExtractedIngredient | string)[];
+  extracted_count: number;
+  verdict: 'match' | 'partial_match' | 'mismatch';
+  match_score: number;
+  submitted_count: number;
+  matched_count: number;
+  missing_in_submission_count: number;
+  summary: string;
+  submitted: IngredientMatchRow[];
+  missing_in_submission: (MissingIngredient | string)[];
+  metadata?: Record<string, unknown>;
+}
+
+/** Reads the ingredient statement out of the product description, then checks
+ * the submitted ingredients against it — one row per submitted ingredient.
+ * Additives are out of scope; send ingredients only. */
+export async function verifyIngredientsWithDescription(
+  food_description: string,
+  ingredient_list: IngredientItem[]
+) {
+  const { data } = await api.post<VerifyIngredientsResponse>(
+    '/kyc/verify_ingredients_with_description',
+    { food_description, ingredient_list }
+  );
+  return data;
+}
