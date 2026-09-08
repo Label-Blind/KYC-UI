@@ -907,7 +907,11 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
 
               <h3 className="font-semibold text-gray-800">AI Category Recommendations</h3>
 
-
+              {explanation && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+                  {explanation}
+                </div>
+              )}
 
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border">
