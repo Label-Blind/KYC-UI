@@ -201,16 +201,16 @@ export interface MissingIngredient {
 export interface VerifyIngredientsResponse {
   food_description: string;
   ingredient_statement_found: boolean;
-  extracted_ingredients: ExtractedIngredient[];
+  extracted_ingredients: (ExtractedIngredient | string)[];
   extracted_count: number;
   verdict: 'match' | 'partial_match' | 'mismatch';
   match_score: number;
   submitted_count: number;
-  counts: Record<IngredientMatchStatus, number>;
+  matched_count: number;
   missing_in_submission_count: number;
   summary: string;
   submitted: IngredientMatchRow[];
-  missing_in_submission: MissingIngredient[];
+  missing_in_submission: (MissingIngredient | string)[];
   metadata?: Record<string, unknown>;
 }
 

@@ -735,7 +735,7 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                     {VERDICT_STYLES[match.verdict].label}
                   </span>
                   <span className="font-semibold">
-                    {match.counts.matched} of {match.submitted_count} ingredients found in the
+                    {match.matched_count} of {match.submitted_count} ingredients found in the
                     description ({match.match_score.toFixed(0)}%)
                   </span>
                 </div>
@@ -805,13 +805,15 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                   </span>
                   <div className="flex flex-wrap gap-2 mt-1">
                     {match.missing_in_submission.map((row, idx) => {
-                      const qty = formatQuantity(row.description_proportion, row.description_unit);
+                      const isString = typeof row === 'string';
+                      const name = isString ? row : row.description_ingredient;
+                      const qty = isString ? null : formatQuantity(row.description_proportion, row.description_unit);
                       return (
                         <span
-                          key={`${row.description_ingredient}-${idx}`}
+                          key={`${name}-${idx}`}
                           className="inline-flex items-center text-xs font-medium px-2 py-1 rounded-full border bg-orange-50 text-orange-800 border-orange-200"
                         >
-                          {row.description_ingredient}
+                          {name}
                           {qty && ` — ${qty}`}
                         </span>
                       );
@@ -821,22 +823,44 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
               )}
 
               {match.extracted_ingredients.length > 0 && (
-                <details className="text-sm">
-                  <summary className="cursor-pointer text-gray-600 hover:text-gray-800">
+                <details className="text-sm" open>
+                  <summary className="cursor-pointer text-gray-600 hover:text-gray-800 font-medium">
                     Ingredients read from the description ({match.extracted_count})
                   </summary>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {match.extracted_ingredients.map((row, idx) => {
-                      const qty = formatQuantity(row.proportion, row.unit);
+                      const isString = typeof row === 'string';
+                      const name = isString ? row : row.ingredient;
+                      const qty = isString ? null : formatQuantity(row.proportion, row.unit);
+                      const parent = isString ? undefined : row.parent;
+                      const isMissing = match.missing_in_submission.some((m) =>
+                        typeof m === 'string'
+                          ? m.toLowerCase() === name.toLowerCase()
+                          : m.description_ingredient?.toLowerCase() === name.toLowerCase()
+                      );
                       return (
                         <span
-                          key={`${row.ingredient}-${idx}`}
-                          className="inline-flex items-center text-xs px-2 py-1 rounded-full border bg-gray-50 text-gray-700 border-gray-200"
+                          key={`${name}-${idx}`}
+                          className={`inline-flex items-center text-xs px-2 py-1 rounded-full border ${isMissing
+                            ? 'bg-orange-50 text-orange-800 border-orange-300 font-semibold'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            }`}
                         >
-                          {row.ingredient}
+                          {isMissing && (
+                            <svg className="w-3 h-3 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M12 3a9 9 0 100 18 9 9 0 000-18z" />
+                            </svg>
+                          )}
+                          {!isMissing && (
+                            <svg className="w-3 h-3 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                          {name}
+                          {isMissing && ' (missing in submission)'}
                           {qty && ` — ${qty}`}
-                          {row.parent && (
-                            <span className="text-gray-400 ml-1">(in {row.parent})</span>
+                          {parent && (
+                            <span className="text-gray-400 ml-1">(in {parent})</span>
                           )}
                         </span>
                       );
@@ -883,11 +907,7 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
 
               <h3 className="font-semibold text-gray-800">AI Category Recommendations</h3>
 
-              {explanation && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-                  {explanation}
-                </div>
-              )}
+
 
               <div className="overflow-x-auto">
                 <table className="w-full text-sm border">
@@ -895,9 +915,9 @@ export default function Step2IFC({ rawMaterialName, onRawMaterialNameChange, onC
                     <tr>
                       <th className="border px-2 py-2 text-left">Category</th>
                       <th className="border px-2 py-2 text-center">Permissibility</th>
-                      <th className="border px-2 py-2 text-right">Name (40%)</th>
-                      <th className="border px-2 py-2 text-right">Description (30%)</th>
-                      <th className="border px-2 py-2 text-center">Ingredient (30%)</th>
+                      <th className="border px-2 py-2 text-right">Name</th>
+                      <th className="border px-2 py-2 text-right">Description</th>
+                      <th className="border px-2 py-2 text-center">Ingredient</th>
                       <th className="border px-2 py-2 text-right">Score</th>
                       <th className="border px-2 py-2"></th>
                     </tr>
